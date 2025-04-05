@@ -35,17 +35,24 @@ def scrape_nse_historical_data():
         print("Failed to click on 'Historical Data':", e)
         driver.quit()
         return
-
+    
     # Click on "6M" filter
     try:
         six_months_filter = wait.until(EC.element_to_be_clickable((By.ID, "sixM")))
         six_months_filter.click()
+        time.sleep(3)
+
+        # Click on "Filter" button after selecting 6M
+        filter_button = wait.until(EC.element_to_be_clickable((By.ID, "tradeDataFilter")))
+        filter_button.click()
         time.sleep(5)
+        
     except Exception as e:
-        print("Failed to click on '6M' filter:", e)
+        print("Failed to click on '6M' filter or 'Filter' button:", e)
         driver.quit()
         return
 
+    
     # Scrape the historical data table
     rows = driver.find_elements(By.XPATH, "//table[@id='equityHistoricalTable']//tbody/tr")
     
