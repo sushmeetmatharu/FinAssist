@@ -6,6 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from pymongo import MongoClient
 import datetime
 from dateutil import parser
+from pymongo import UpdateOne
 
 # MongoDB Setup
 client = MongoClient("mongodb://localhost:27017/")
@@ -22,6 +23,18 @@ def format_date_for_id(date_value):
     elif isinstance(date_value, datetime.datetime):
         return date_value.strftime('%Y-%m-%d')
     return date_value
+
+def clean_announcement_text(text):
+    """Clean up announcement text by removing 'Read Less' and ensuring proper punctuation"""
+    # Remove "Read Less" if it exists at the end
+    if text.endswith("Read Less"):
+        text = text[:-9].strip()
+    
+    # Ensure the text ends with proper punctuation
+    if text and not text[-1] in {'.', '!', '?'}:
+        text = text + '.'
+    
+    return text
 
 def scrape_nse_historical_data():
     options = uc.ChromeOptions()
@@ -65,8 +78,8 @@ def scrape_nse_historical_data():
             
             # Click on "1Y" filter
             try:
-                six_months_filter = wait.until(EC.element_to_be_clickable((By.ID, "oneY")))
-                six_months_filter.click()
+                one_year_filter = wait.until(EC.element_to_be_clickable((By.ID, "oneY")))
+                one_year_filter.click()
                 time.sleep(3)
 
                 # Click on "Filter" button after selecting 1Y
@@ -74,7 +87,7 @@ def scrape_nse_historical_data():
                 filter_button.click()
                 time.sleep(5)
             except Exception as e:
-                print("Failed to click on '6M' filter or 'Filter' button:", e)
+                print("Failed to click on '1Y' filter or 'Filter' button:", e)
                 driver.close()
                 driver.switch_to.window(main_tab)
                 continue
@@ -221,13 +234,13 @@ def scrape_nse_historical_data():
                 driver.switch_to.window(main_tab)
                 continue
             
-            # Click on "6M" filter in announcements
+            # Click on "1Y" filter in announcements (changed from 6M to 1Y)
             try:
-                announcements_six_months = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[@data-val='6M']")))
-                announcements_six_months.click()
+                announcements_one_year = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[@data-val='1Y']")))
+                announcements_one_year.click()
                 time.sleep(5)
             except Exception as e:
-                print("Failed to click on '6M' filter in announcements:", e)
+                print("Failed to click on '1Y' filter in announcements:", e)
                 driver.close()
                 driver.switch_to.window(main_tab)
                 continue
@@ -283,6 +296,9 @@ def scrape_nse_historical_data():
                     if "..." in announcement_text and not cols[1].find_elements(By.CLASS_NAME, "readMore"):
                         continue
 
+                    # Clean up the announcement text
+                    announcement_text = clean_announcement_text(announcement_text)
+
                     # Format the broadcast date as YYYY-MM-DD for _id
                     try:
                         broadcast_date = parser.parse(broadcast_time.split()[0], dayfirst=True)
@@ -301,7 +317,6 @@ def scrape_nse_historical_data():
             announcements_collection = db["announcements"]
             if announcements_data_list:
                 # Using bulk_write with update_one operations for upsert functionality
-                from pymongo import UpdateOne
                 operations = [
                     UpdateOne(
                         {"_id": doc["_id"]},
