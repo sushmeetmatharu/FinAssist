@@ -63,13 +63,13 @@ def scrape_nse_historical_data():
                 driver.switch_to.window(main_tab)
                 continue
             
-            # Click on "6M" filter
+            # Click on "1Y" filter
             try:
-                six_months_filter = wait.until(EC.element_to_be_clickable((By.ID, "sixM")))
+                six_months_filter = wait.until(EC.element_to_be_clickable((By.ID, "oneY")))
                 six_months_filter.click()
                 time.sleep(3)
 
-                # Click on "Filter" button after selecting 6M
+                # Click on "Filter" button after selecting 1Y
                 filter_button = wait.until(EC.element_to_be_clickable((By.ID, "tradeDataFilter")))
                 filter_button.click()
                 time.sleep(5)
