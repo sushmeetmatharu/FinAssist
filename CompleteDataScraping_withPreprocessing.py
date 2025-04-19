@@ -137,9 +137,9 @@ def scrape_nse_historical_data():
                     trade_info_data = {
                         "_id": format_date_for_id(scraped_at),
                         "Traded Volume (Lakhs)": driver.find_element(By.ID, "orderBookTradeVol").text.strip(),
-                        "Traded Value (₹ Cr.)": driver.find_element(By.ID, "orderBookTradeVal").text.strip(),
-                        "Total Market Cap (₹ Cr.)": driver.find_element(By.ID, "orderBookTradeTMC").text.strip(),
-                        "Free Float Market Cap (₹ Cr.)": driver.find_element(By.ID, "orderBookTradeFFMC").text.strip(),
+                        "Traded Value (₹ Cr)": driver.find_element(By.ID, "orderBookTradeVal").text.strip().replace('₹', '').replace(',', '').strip(),
+                        "Total Market Cap (₹ Cr)": driver.find_element(By.ID, "orderBookTradeTMC").text.strip().replace('₹', '').replace(',', '').strip(),
+                        "Free Float Market Cap (₹ Cr)": driver.find_element(By.ID, "orderBookTradeFFMC").text.strip().replace('₹', '').replace(',', '').strip(),
                         "Impact Cost": driver.find_element(By.ID, "orderBookTradeIC").text.strip(),
                         "% of Deliverable / Traded Quantity": driver.find_element(By.ID, "orderBookDeliveryTradedQty").text.strip(),
                         "Applicable Margin Rate": driver.find_element(By.ID, "orderBookAppMarRate").text.strip(),
