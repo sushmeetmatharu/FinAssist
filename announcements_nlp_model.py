@@ -1,272 +1,133 @@
+import os
 import pandas as pd
-import numpy as np
-from pymongo import MongoClient
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.metrics import classification_report, mean_squared_error
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler
-from textblob import TextBlob
-import re
 from datetime import datetime, timedelta
-import nltk
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+import joblib
+import numpy as np
+import matplotlib.pyplot as plt
 
-# Download NLTK resources
-nltk.download('stopwords')
-nltk.download('wordnet')
-nltk.download('punkt')
+# Path to your folder
+BASE_DIR = r"D:\Downloads\NSE_Data"
 
-# MongoDB connection setup
-def get_mongo_client(uri="mongodb://localhost:27017/"):
-    return MongoClient(uri)
+def parse_announcement_date(date_str):
+    # Replace multiple spaces with a single space and strip leading/trailing whitespace
+    date_str = ' '.join(date_str.strip().split())
+    return datetime.strptime(date_str, "%d-%b-%Y %H:%M:%S").date()
 
-# Text preprocessing
-def preprocess_text(text):
-    if not isinstance(text, str):
-        return ""
-    
-    # Lowercase
-    text = text.lower()
-    # Remove special chars
-    text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
-    # Tokenize
-    tokens = nltk.word_tokenize(text)
-    # Remove stopwords
-    stop_words = set(stopwords.words('english'))
-    tokens = [word for word in tokens if word not in stop_words]
-    # Lemmatize
-    lemmatizer = WordNetLemmatizer()
-    tokens = [lemmatizer.lemmatize(word) for word in tokens]
-    
-    return ' '.join(tokens)
+def parse_historical_date(date_str):
+    date_str = ' '.join(date_str.strip().split())  # Normalize spacing
+    return datetime.strptime(date_str, "%d-%b-%Y").date()
 
-# Feature extraction from announcements
-def extract_announcement_features(announcement_text, subject):
-    processed_text = preprocess_text(announcement_text)
-    processed_subject = preprocess_text(subject)
-    
-    # TextBlob sentiment analysis
-    blob = TextBlob(announcement_text)
-    sentiment_polarity = blob.sentiment.polarity
-    sentiment_subjectivity = blob.sentiment.subjectivity
-    
-    # Length features
-    text_length = len(announcement_text)
-    word_count = len(announcement_text.split())
-    
-    # Subject features
-    subject_length = len(subject)
-    subject_word_count = len(subject.split())
-    
-    # Keyword features
-    keywords = ['dividend', 'meeting', 'acquisition', 'merger', 'results', 'financial', 'board', 
-                'approval', 'issue', 'subsidiary', 'share', 'price', 'rating', 'loan', 'debt']
-    keyword_counts = {f'kw_{kw}': announcement_text.lower().count(kw) for kw in keywords}
-    
-    return {
-        'processed_text': processed_text,
-        'processed_subject': processed_subject,
-        'sentiment_polarity': sentiment_polarity,
-        'sentiment_subjectivity': sentiment_subjectivity,
-        'text_length': text_length,
-        'word_count': word_count,
-        'subject_length': subject_length,
-        'subject_word_count': subject_word_count,
-        **keyword_counts
-    }
+def calculate_percentage_change(prev_close, next_close):
+    return round(((next_close - prev_close) / prev_close) * 100, 2)
 
-# Get price movement after announcement
-def get_price_movement(company_db, announcement_date, lookahead_days=3):
-    hist_data = company_db['historical_data']
-    
-    # Convert announcement_date to datetime if it's string
-    if isinstance(announcement_date, str):
-        announcement_date = datetime.strptime(announcement_date, "%Y-%m-%d")
-    
-    # Get announcement day price
-    announcement_day = hist_data.find_one({"Date": announcement_date.strftime("%d-%b-%Y")})
-    if not announcement_day:
-        return None
-    
-    # Get future price (lookahead_days after announcement)
-    future_date = announcement_date + timedelta(days=lookahead_days)
-    future_day = hist_data.find_one({"Date": future_date.strftime("%d-%b-%Y")})
-    
-    if not future_day:
-        # Try to find the next available trading day
-        for i in range(1, 7):
-            future_date = announcement_date + timedelta(days=lookahead_days + i)
-            future_day = hist_data.find_one({"Date": future_date.strftime("%d-%b-%Y")})
-            if future_day:
-                break
-    
-    if not future_day:
-        return None
-    
-    # Calculate percentage change
-    try:
-        announcement_close = float(announcement_day['CLOSE'])
-        future_close = float(future_day['CLOSE'])
-        pct_change = (future_close - announcement_close) / announcement_close * 100
-        return pct_change
-    except (KeyError, TypeError):
-        return None
+def extract_features_and_labels(announcements_df, historical_df):
+    announcements_df['BROADCAST_DATE'] = announcements_df['BROADCAST DATE/TIME'].apply(parse_announcement_date)
+    historical_df['DATE'] = historical_df['Date'].apply(parse_historical_date)
+    # Convert 'close' to numeric
+    historical_df['close'] = pd.to_numeric(historical_df['close'], errors='coerce')
 
-# Prepare dataset from MongoDB
-def prepare_dataset(company_db, max_samples=None):
-    announcements = company_db['announcements']
-    dataset = []
-    
-    # Get all announcements with their dates
-    for i, ann in enumerate(announcements.find()):
-        if max_samples and i >= max_samples:
-            break
-            
-        try:
-            # Extract announcement features
-            features = extract_announcement_features(
-                ann.get('Announcement', ''),
-                ann.get('Subject', '')
-            )
-            
-            # Get price movement
-            pct_change = get_price_movement(company_db, ann['_id'])
-            if pct_change is None:
-                continue
-                
-            # Add to dataset
-            dataset.append({
-                **features,
-                'pct_change': pct_change,
-                'direction': 1 if pct_change > 0 else 0,  # 1 for increase, 0 for decrease
-                'announcement_date': ann['_id'],
-                'raw_announcement': ann.get('Announcement', ''),
-                'raw_subject': ann.get('Subject', '')
-            })
-        except Exception as e:
-            print(f"Error processing announcement {ann['_id']}: {str(e)}")
-            continue
-    
-    return pd.DataFrame(dataset)
+    label_data = []
 
-# Model training
-def train_models(df):
-    # Split data
-    X = df.drop(['pct_change', 'direction', 'announcement_date', 'raw_announcement', 'raw_subject'], axis=1)
-    y_direction = df['direction']
-    y_pct_change = df['pct_change']
-    
-    X_train, X_test, y_dir_train, y_dir_test = train_test_split(
-        X, y_direction, test_size=0.2, random_state=42
-    )
-    
-    _, _, y_pct_train, y_pct_test = train_test_split(
-        X, y_pct_change, test_size=0.2, random_state=42
-    )
-    
-    # Define preprocessing
-    text_features = ['processed_text', 'processed_subject']
-    numeric_features = [col for col in X.columns if col not in text_features]
-    
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('text', TfidfVectorizer(max_features=1000), 'processed_text'),
-            ('subject', TfidfVectorizer(max_features=200), 'processed_subject'),
-            ('num', StandardScaler(), numeric_features)
-        ])
-    
-    # Direction classifier
-    dir_clf = Pipeline([
-        ('preprocessor', preprocessor),
-        ('classifier', RandomForestClassifier(n_estimators=100, random_state=42))
-    ])
-    
-    # Percentage change regressor
-    pct_reg = Pipeline([
-        ('preprocessor', preprocessor),
-        ('regressor', RandomForestRegressor(n_estimators=100, random_state=42))
-    ])
-    
-    # Train models
-    dir_clf.fit(X_train, y_dir_train)
-    pct_reg.fit(X_train, y_pct_train)
-    
-    # Evaluate
-    dir_pred = dir_clf.predict(X_test)
-    pct_pred = pct_reg.predict(X_test)
-    
-    print("Direction Classification Report:")
-    print(classification_report(y_dir_test, dir_pred))
-    
-    print("\nPercentage Change Regression Metrics:")
-    print(f"MSE: {mean_squared_error(y_pct_test, pct_pred)}")
-    print(f"RMSE: {np.sqrt(mean_squared_error(y_pct_test, pct_pred))}")
-    
-    return dir_clf, pct_reg
+    for _, row in announcements_df.iterrows():
+        ann_date = row['BROADCAST_DATE']
+        next_day = ann_date + timedelta(days=1)
+        prev_day = ann_date - timedelta(days=1)
 
-# Prediction function
-def predict_announcement_impact(model_dir, model_pct, announcement_text, subject):
-    # Extract features
-    features = extract_announcement_features(announcement_text, subject)
-    
-    # Create DataFrame with same structure as training data
-    input_data = pd.DataFrame([{
-        'processed_text': features['processed_text'],
-        'processed_subject': features['processed_subject'],
-        'sentiment_polarity': features['sentiment_polarity'],
-        'sentiment_subjectivity': features['sentiment_subjectivity'],
-        'text_length': features['text_length'],
-        'word_count': features['word_count'],
-        'subject_length': features['subject_length'],
-        'subject_word_count': features['subject_word_count'],
-        **{f'kw_{kw}': features.get(f'kw_{kw}', 0) for kw in [
-            'dividend', 'meeting', 'acquisition', 'merger', 'results', 'financial', 'board',
-            'approval', 'issue', 'subsidiary', 'share', 'price', 'rating', 'loan', 'debt'
-        ]}
-    }])
-    
-    # Make predictions
-    direction = model_dir.predict(input_data)[0]
-    pct_change = model_pct.predict(input_data)[0]
-    
-    return {
-        'direction': 'increase' if direction == 1 else 'decrease',
-        'percentage_change': pct_change,
-        'confidence': max(model_dir.predict_proba(input_data)[0])  # Confidence score
-    }
+        prev_day_row = historical_df[historical_df['DATE'] == prev_day]
+        next_day_row = historical_df[historical_df['DATE'] == next_day]
 
-# Main execution
-if __name__ == "__main__":
-    # Connect to MongoDB
-    client = get_mongo_client()
-    company_db = client['BAJAJFINSV']  # Replace with your company database name
-    
-    # Prepare dataset
-    print("Preparing dataset...")
-    df = prepare_dataset(company_db, max_samples=1000)  # Limit samples for demo
-    
-    if len(df) == 0:
-        print("No valid data found. Check your MongoDB collections.")
-        exit()
-    
-    print(f"Dataset prepared with {len(df)} samples")
-    
-    # Train models
-    print("Training models...")
-    dir_clf, pct_reg = train_models(df)
-    
-    # Example prediction
-    test_announcement = "Bajaj Finserv has informed the Exchange regarding Notice of Annual General Meeting and e-Voting information."
-    test_subject = "Shareholders meeting"
-    
-    prediction = predict_announcement_impact(dir_clf, pct_reg, test_announcement, test_subject)
-    
-    print("\nExample Prediction:")
-    print(f"Announcement: {test_announcement}")
-    print(f"Subject: {test_subject}")
-    print(f"Predicted movement: {prediction['direction']} by {prediction['percentage_change']:.2f}%")
-    print(f"Confidence: {prediction['confidence']:.2f}")
+        if not prev_day_row.empty and not next_day_row.empty:
+            prev_close = prev_day_row['close'].values[0]
+            next_close = next_day_row['close'].values[0]
+            if pd.notna(prev_close) and pd.notna(next_close) and prev_close != 0:
+                percent_change = calculate_percentage_change(prev_close, next_close)
+                label_data.append({
+                    "text": f"{row['SUBJECT']}. {row['DETAILS']}",
+                    "percentage_change": percent_change
+                })
+
+    return pd.DataFrame(label_data)
+
+# Step 1: Merge data from all companies
+all_data = []
+
+for company_folder in os.listdir(BASE_DIR):
+    company_path = os.path.join(BASE_DIR, company_folder)
+    if os.path.isdir(company_path):
+        files = os.listdir(company_path)
+        announcements_file = [f for f in files if 'announcements' in f.lower()][0]
+        historical_file = [f for f in files if 'historical' in f.lower()][0]
+
+        announcements_path = os.path.join(company_path, announcements_file)
+        historical_path = os.path.join(company_path, historical_file)
+
+        announcements_df = pd.read_csv(announcements_path)
+        announcements_df.columns = announcements_df.columns.str.strip()
+        historical_df = pd.read_csv(historical_path)
+        historical_df.columns = historical_df.columns.str.strip()  # Remove trailing spaces
+
+        features_labels = extract_features_and_labels(announcements_df, historical_df)
+        all_data.append(features_labels)
+
+# Combine all into one DataFrame
+dataset = pd.concat(all_data, ignore_index=True)
+
+# Step 2: Text Vectorization
+vectorizer = TfidfVectorizer(max_features=500)
+X = vectorizer.fit_transform(dataset['text']).toarray()
+y = dataset['percentage_change'].values
+
+# Step 3: Train/Test split and Model Training
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = RandomForestRegressor(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# Step 4: Evaluation
+y_pred = model.predict(X_test)
+print("R2 Score:", r2_score(y_test, y_pred))
+print("RMSE:", mean_squared_error(y_test, y_pred, squared=False))
+
+# Calculate errors
+errors = y_test - y_pred
+
+# 1. Histogram of Prediction Errors
+plt.figure(figsize=(8, 5))
+plt.hist(errors, bins=30, color='skyblue', edgecolor='black')
+plt.title("Histogram of Prediction Errors")
+plt.xlabel("Prediction Error (Actual - Predicted)")
+plt.ylabel("Frequency")
+plt.grid(True)
+plt.show()
+
+# 2. Actual vs. Predicted Scatter Plot
+plt.figure(figsize=(8, 5))
+plt.scatter(y_test, y_pred, alpha=0.7, color='mediumseagreen')
+plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], 'r--')  # reference line
+plt.title("Actual vs. Predicted Percentage Change")
+plt.xlabel("Actual Percentage Change")
+plt.ylabel("Predicted Percentage Change")
+plt.grid(True)
+plt.show()
+
+# Step 5: Save model and vectorizer
+joblib.dump(model, "stock_price_change_model.pkl")
+joblib.dump(vectorizer, "announcement_vectorizer.pkl")
+
+# Step 6: Prediction Function
+def predict_announcement_effect(announcement_text):
+    vectorizer = joblib.load("announcement_vectorizer.pkl")
+    model = joblib.load("stock_price_change_model.pkl")
+    vect_text = vectorizer.transform([announcement_text]).toarray()
+    predicted_change = model.predict(vect_text)[0]
+    direction = "increase" if predicted_change > 0 else "decrease"
+    return direction, round(abs(predicted_change), 2)
+
+# Example usage
+example_announcement = "Board Meeting Intimation for Quarterly Results"
+direction, percentage = predict_announcement_effect(example_announcement)
+print(f"The stock is likely to {direction} by {percentage}%")
