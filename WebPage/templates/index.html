@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>finAssist | Smart Stock Predictions</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center px-4">
+    <div class="w-full max-w-2xl bg-gray-800 p-8 rounded-2xl shadow-lg">
+        <h1 class="text-3xl font-bold mb-6 text-center text-green-400">📈 finAssist</h1>
+        <form method="POST" class="space-y-4">
+            <div>
+                <label for="stock_name" class="block mb-2 text-sm font-medium">Stock Name</label>
+                <input type="text" id="stock_name" name="stock_name" placeholder="e.g., TCS, INFY"
+                    class="w-full p-3 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-green-400" required>
+            </div>
+
+            <div>
+                <label for="announcement" class="block mb-2 text-sm font-medium">Paste Recent Announcement (Optional)</label>
+                <textarea id="announcement" name="announcement" rows="5"
+                    class="w-full p-3 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-green-400"
+                    placeholder="e.g., Company announces major acquisition or change in board members..."></textarea>
+            </div>
+
+            <button type="submit"
+                class="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-3 rounded-lg transition">
+                Predict & Recommend
+            </button>
+        </form>
+
+        <!-- Chatbot Section -->
+        <div class="mt-8 p-4 bg-gray-700 rounded-lg">
+            <h2 class="text-xl font-semibold text-blue-300 mb-2">🤖 Chat with finAssist</h2>
+            <textarea id="chatInput" rows="4" class="w-full p-3 rounded-lg bg-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="Ask something about the stock market..."></textarea>
+            <button onclick="sendMessage()"
+                class="mt-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg transition">
+                Ask Chatbot
+            </button>
+            <p id="chatResponse" class="mt-4 text-white font-medium"></p>
+        </div>
+
+        <!-- 🔮 Predict Next-Day Closing Price -->
+        <div class="mt-10 p-4 bg-gray-700 rounded-lg">
+            <h2 class="text-xl font-semibold text-purple-300 mb-4">🔮 Predict Next-Day Closing Price</h2>
+            <form method="POST" class="grid grid-cols-2 gap-4">
+                {% set fields = [
+                    ('open', 'Open'), ('high', 'High'), ('low', 'Low'), ('prev_close', 'Previous Close'),
+                    ('ltp', 'LTP'), ('close', 'Close'), ('vwap', 'VWAP'), ('fifty_two_w_high', '52W High'),
+                    ('fifty_two_w_low', '52W Low'), ('volume', 'Volume'), ('value', 'Value'), ('no_of_trades', 'No. of Trades')
+                ] %}
+                {% for name, label in fields %}
+                    <div>
+                        <label for="{{ name }}" class="block text-sm font-medium mb-1">{{ label }}</label>
+                        <input type="number" step="any" name="{{ name }}" id="{{ name }}" required
+                            class="w-full p-2 rounded bg-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-purple-400">
+                    </div>
+                {% endfor %}
+                <div class="col-span-2">
+                    <button type="submit" name="predict_price"
+                        class="w-full bg-purple-500 hover:bg-purple-600 text-white font-semibold py-2 rounded-lg transition">
+                        Predict Closing Price
+                    </button>
+                </div>
+            </form>
+
+            {% if closing_price %}
+                <p class="mt-4 text-white text-lg font-semibold">
+                    📈 Predicted Closing Price: <span class="text-green-300">₹{{ closing_price }}</span>
+                </p>
+            {% endif %}
+        </div>
+
+        {% if prediction %}
+            <div class="mt-6 p-4 bg-gray-700 rounded-lg">
+                <h2 class="text-xl font-semibold text-green-300 mb-2">📊 Prediction</h2>
+                <p>{{ prediction }}</p>
+            </div>
+        {% endif %}
+
+        {% if recommendation %}
+            <div class="mt-4 p-4 bg-gray-700 rounded-lg">
+                <h2 class="text-xl font-semibold text-yellow-300 mb-2">💡 Recommendation</h2>
+                <p>{{ recommendation }}</p>
+            </div>
+        {% endif %}
+    </div>
+    <script>
+        function sendMessage() {
+            const message = document.getElementById("chatInput").value;
+            document.getElementById("chatResponse").innerText = "🤔 Thinking...";
+
+            fetch("http://127.0.0.1:5005/chat", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ message: message })
+            })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById("chatResponse").innerText = data.response;
+            })
+            .catch(err => {
+                document.getElementById("chatResponse").innerText = "⚠️ Error: " + err.message;
+            });
+        }
+    </script>
+
+</body>
+</html>
